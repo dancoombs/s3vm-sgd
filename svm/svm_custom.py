@@ -7,7 +7,7 @@
 
 import numpy as np
 import cvxopt
-from kernel import Kernel
+from .kernel import Kernel
 
 class SVM:
     """ Support Vector Machine classifier
