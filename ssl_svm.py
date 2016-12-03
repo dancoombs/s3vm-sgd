@@ -7,18 +7,19 @@
 ##################################################################
 
 from sklearn.neighbors import NearestNeighbors
+from collections import deque
 import numpy as np
 
 class S3VM_SGD:
     """
     """
-    def __init__(self, kernel='linear', knn=5, eta0=1.0, alpha=0.001, pest=0.5, prange=0.05):
+    def __init__(self, kernel='linear', knn=5, eta0=1.0, alpha=0.001, pest=0.5, buffer_size=25):
         self._kernel = kernel
         self._knn = knn
         self._eta0 = eta0 
         self._alpha = alpha
         self._pest = pest
-        self._prange = prange
+        self._buffer_size = buffer_size
         self._weight_init = False
         self._knn_fit = False
         self._num_train = 0
@@ -45,40 +46,54 @@ class S3VM_SGD:
             self._sgd_step(x_i, y_i)
 
     def fit_unlabel(self, X_label, y_label, X_unlabel):
-        if self._knn_fit == False:
-            self._fit_knn(X_label)
+        # initialize buffer
+        buff_x = deque(maxlen=self._buffer_size)
+        buff_y = deque(maxlen=self._buffer_size)
 
-        num_ones = 0
-        num_train = 0
+        # No balancing constraint, using labels as knn
         for x_i in X_unlabel:
-            # determine knn
-            knn = self._kneighbors(x_i)
+            knn_idx = self._get_knn(X_label, x_i)
+            y_i = np.sign(np.sum(y_label[knn_idx]))
+            self._sgd_step(x_i, y_i)
 
-            # predict label
-            y_i = np.sign(np.sum(y_label[knn]))
+        # for x_i in X_unlabel:
+        #     # fill up buffer before using balancing constraint
+        #     if len(buff_x) < 25:
+        #         # get knn with labeled data
+        #         knn_idx = self._get_knn(X_label, x_i)
+                
+        #         # predict y_i based on knn from labels
+        #         y_i = np.sign(np.sum(y_label[knn_idx]))
+        #         self._sgd_step(x_i, y_i)
 
-            # # PROBLEM: y_i doesn't have information about the boudary, need to use
-            # # predictions of a buffer of past unabled points
+        #     else:
+        #         # get knn with buffer
+        #         knn_idx = self._get_knn(buff_x, x_i[:-1])
 
-            # # TODO: fix this
-            # # # evaluate p_y < pest
-            # num_train += 1
-            # if y_i == 1: 
-            #     num_ones += 1
-            #     p_y =  num_ones / num_train
-            # else:
-            #     p_y = 1 - num_ones / num_train
+        #         # calc y_i based on majority vote
+        #         buff_preds = self.predict(np.array(list(buff_x))[knn_idx])
+        #         y_i = np.sign(np.sum(buff_preds))
+
+        #         # calculate fraction of resenct labels
+        #         # TODO: just use a running counter
+        #         p_one = buff_y.count(1) / len(buff_y)
+        #         print(y_i, p_one)
+
+        #         if y_i == 1 and p_one < self._pest:
+        #             self._sgd_step(x_i, y_i)
+        #         elif y_i == -1 and p_one > self._pest:
+        #             self._sgd_step(x_i, y_i)
             
-            # print(knn, y_i, p_y)
-
-            # # # keep in range, if out of range take step
-            if p_y < self._pest:
-                self._sgd_step(x_i, y_i)
+        #         buff_x.popleft()
+        #         buff_y.popleft()
+            
+        #     # leave out bias
+        #     buff_x.append(x_i[:-1])
+        #     buff_y.append(y_i)
 
     def decision_function(self, X):
         a = np.ones(len(X))
         X = np.c_[X, a]
-
         return np.inner(self._weights, X)
 
     def predict(self, X):
@@ -96,16 +111,12 @@ class S3VM_SGD:
         self._weights = np.zeros(n_dims + 1)
         self._weight_init = True
 
-    def _fit_knn(self, X):
-        # TODO: don't use sklearn
-        self._neigh = NearestNeighbors(self._knn + 1)
-        self._neigh.fit(X)
-        self._knn_fit = True
-
-    def _kneighbors(self, x_i):
-        # TODO: don't use sklearn
-        _, knn = self._neigh.kneighbors(x_i.reshape(1, -1))
-        return knn[0, 1:]
+    def _get_knn(self, X, x_i):
+        # TODO: don't use sklearn, check this
+        knn = NearestNeighbors(self._knn + 1)
+        knn.fit(X)
+        _, knn_idx = knn.kneighbors(x_i.reshape(1, -1))
+        return knn_idx[0, 1:]
 
     def _sgd_step(self, x_i, y_i):
         # learning rate decay
