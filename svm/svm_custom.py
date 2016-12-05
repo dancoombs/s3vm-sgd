@@ -65,7 +65,7 @@ class SVM:
         self._gamma = gamma
 
         if degree < 1:
-            print('Degree must be >= 1, default to 3'):
+            print('Degree must be >= 1, default to 3')
             degree = 3
 
         self._degree = degree

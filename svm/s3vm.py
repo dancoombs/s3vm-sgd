@@ -14,7 +14,7 @@ from collections import deque
 import numpy as np
 
 # helper functions for S3VM SGD
-def _get_knn(k, X, x_i):
+def get_knn(k, X, x_i):
     """
     Calculates the K-nearest-neighbors of a given sample x_i by finding the K
     closest samples in X in terms of their euclidean distances from the given
@@ -39,7 +39,7 @@ def _get_knn(k, X, x_i):
     return knn
 
 
-def _transform(X, kernel, gamma=1.0):
+def transform(X, kernel, gamma=1.0, n_components=50):
     """
     Transfroms the input samples for a kernel input mapping. If the specified
     kernel is non-linear this can be called a NLIM (non-linear input mapping)
@@ -57,10 +57,16 @@ def _transform(X, kernel, gamma=1.0):
     Returns
     -------
     X_tran : vector of transformed samples
-    
+
+    Notes
+    -----
+    RBF kernel references
+    [1] http://www.robots.ox.ac.uk/~vgg/rg/papers/randomfeatures.pdf
+    [2] http://people.eecs.berkeley.edu/~brecht/papers/08.rah.rec.nips.pdf
+    [3] http://scikit-learn.org/stable/modules/generated/sklearn.kernel_approximation.RBFSampler.html
+     
     """
 
-    # TODO: custom implementations of these for silicon
     if kernel == 'linear':
         X_tran = X
     elif kernel == 'rbf':
@@ -68,11 +74,23 @@ def _transform(X, kernel, gamma=1.0):
             print('Gamma must be greater than 0: setting to default')
             gamma = 1.0
 
-        rbf_feature = RBFSampler(gamma=gamma, n_components=n, random_state=1)
-        X_tran = rbf_feature.fit_transform(x)
+        # rbf_feature = RBFSampler(gamma=gamma, n_components=50, random_state=1)
+        # X_tran = rbf_feature.fit_transform(X)
+
+        # transform using formula from [2]
+        random = np.random.RandomState(1)
+        random_weights = (np.sqrt(2 * gamma) * random.normal(size=(X.shape[1], n_components)))
+        random_offset = random.uniform(0, 2*np.pi, size=n_components)
+
+        project = X @ random_weights + random_offset
+        X_tran = np.sqrt(2) / np.sqrt(n_components) * np.cos(project)
     else:
         print('Kernel not supported, defaulting to linear')
         X_tran = X
+
+    # add column for bias
+    a = np.ones(len(X_tran))
+    X_tran = np.c_[X_tran, a]
 
     return X_tran
 
@@ -126,6 +144,7 @@ class S3VM_SGD:
         self._alpha = alpha
         self._pest = pest
         self._buffer_size = buffer_size
+        self._gamma = gamma
         self._weight_init = False
         self._knn_fit = False
         self._num_train = 0
@@ -147,15 +166,11 @@ class S3VM_SGD:
 
         """
 
-        # Transform data for NLIM, add feature for bias
-        #X_label, X_unlabel = _transform([X_label, X_unlabel], self._kernel)
-
-        # add column of ones to X for bias
-        a = np.ones(len(X_label))
-        X_label = np.c_[X_label, a]
-
-        a = np.ones(len(X_unlabel))
-        X_unlabel = np.c_[X_unlabel, a]
+        # Transform data for NLIM
+        n_label = X_label.shape[0]
+        X = np.vstack([X_label, X_unlabel])
+        X_tran = transform(X, self._kernel, self._gamma)
+        X_label, X_unlabel = np.split(X_tran, [n_label])
 
         # Initialize weights for SGD
         self._initialize_weights(X_label.shape[1])
@@ -210,7 +225,7 @@ class S3VM_SGD:
 
         # No balancing constraint, using labels as knn
         for x_i in X_unlabel:
-            knn_idx = _get_knn(self._knn, X_label, x_i)
+            knn_idx = get_knn(self._knn, X_label, x_i)
             y_i = np.sign(np.sum(y_label[knn_idx]))
             self._sgd_step(x_i, y_i)
 
@@ -267,8 +282,7 @@ class S3VM_SGD:
 
         """
 
-        a = np.ones(len(X))
-        X = np.c_[X, a]
+        X = transform(X, self._kernel, gamma=self._gamma)
         return np.inner(self._weights, X)
 
     def predict(self, X):
