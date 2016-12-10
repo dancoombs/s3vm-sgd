@@ -77,7 +77,7 @@ def transform(X, kernel, gamma=1.0, n_components=50):
         # rbf_feature = RBFSampler(gamma=gamma, n_components=50, random_state=1)
         # X_tran = rbf_feature.fit_transform(X)
 
-        # transform using formula from [2]
+        # transform using formulas from [1,2] based off implementation in [3]
         random = np.random.RandomState(1)
         random_weights = (np.sqrt(2 * gamma) * random.normal(size=(X.shape[1], n_components)))
         random_offset = random.uniform(0, 2*np.pi, size=n_components)
@@ -170,15 +170,15 @@ class S3VM_SGD:
         n_label = X_label.shape[0]
         X = np.vstack([X_label, X_unlabel])
         X_tran = transform(X, self._kernel, self._gamma)
-        X_label, X_unlabel = np.split(X_tran, [n_label])
+        X_label_tran, X_unlabel_tran = np.split(X_tran, [n_label])
 
         # Initialize weights for SGD
-        self._initialize_weights(X_label.shape[1])
+        self._initialize_weights(X_label_tran.shape[1])
 
         # fit labeled data, then unlabeled data
         # TODO: stopping criterion?
-        self.fit_label(X_label, y_label)
-        self.fit_unlabel(X_label, y_label, X_unlabel)
+        self.fit_label(X_label_tran, y_label)
+        self.fit_unlabel(X_label_tran, y_label, X_unlabel_tran)
 
     def fit_label(self, X, y):
         """
@@ -219,53 +219,25 @@ class S3VM_SGD:
         TODO: Implement a balancing constraint
         """
 
-        # initialize buffer
-        # buff_x = deque(maxlen=self._buffer_size)
-        # buff_y = deque(maxlen=self._buffer_size)
-
         # No balancing constraint, using labels as knn
         for x_i in X_unlabel:
             knn_idx = get_knn(self._knn, X_label, x_i)
             y_i = np.sign(np.sum(y_label[knn_idx]))
             self._sgd_step(x_i, y_i)
 
-        # With balancing constraint
+
         # for x_i in X_unlabel:
-        #     # fill up buffer before using balancing constraint
-        #     if len(buff_x) < 25:
-        #         # get knn with labeled data
-        #         knn_idx = self._get_knn(X_label, x_i)
-                
-        #         # predict y_i based on knn from labels
-        #         y_i = np.sign(np.sum(y_label[knn_idx]))
-        #         self._sgd_step(x_i, y_i)
+        #     knn_idx = get_knn(5, X_unlabel, x_i)
+        #     x_j = X_unlabel[np.random.choice(knn_idx, 1).item()]
 
-        #     else:
-        #         # get knn with buffer
-        #         knn_idx = self._get_knn(buff_x, x_i[:-1])
+        #     f_i = self.decision_function(x_i.reshape(1, -1), trans=False)
+        #     f_j = self.decision_function(x_j.reshape(1, -1), trans=False)
+        #     y_i = np.sign(f_i + f_j)
 
-        #         # calc y_i based on majority vote
-        #         buff_preds = self.predict(np.array(list(buff_x))[knn_idx])
-        #         y_i = np.sign(np.sum(buff_preds))
+        #     self._sgd_step(x_i, y_i)
 
-        #         # calculate fraction of resenct labels
-        #         # TODO: just use a running counter
-        #         p_one = buff_y.count(1) / len(buff_y)
-        #         print(y_i, p_one)
 
-        #         if y_i == 1 and p_one < self._pest:
-        #             self._sgd_step(x_i, y_i)
-        #         elif y_i == -1 and p_one > self._pest:
-        #             self._sgd_step(x_i, y_i)
-            
-        #         buff_x.popleft()
-        #         buff_y.popleft()
-            
-        #     # leave out bias
-        #     buff_x.append(x_i[:-1])
-        #     buff_y.append(y_i)
-
-    def decision_function(self, X):
+    def decision_function(self, X, trans=True):
         """
         Computes numerical value of the decision function. This sign of this value indicates which
         side of the decision surface the sample is on. The magnitude determines how far away the
@@ -281,8 +253,8 @@ class S3VM_SGD:
         result : vector of values of the decision function coressponding to X
 
         """
-
-        X = transform(X, self._kernel, gamma=self._gamma)
+        if trans == True:
+            X = transform(X, self._kernel, gamma=self._gamma)
         return np.inner(self._weights, X)
 
     def predict(self, X):
